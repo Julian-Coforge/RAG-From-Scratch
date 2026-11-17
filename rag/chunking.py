@@ -5,9 +5,10 @@ def split_sections(markdown):
     """
 
     sections = []
-    current = None
+    current = {"section": "Preamble", "lines": []}
 
     for line in markdown.splitlines():
+
         stripped = line.strip()
         heading_level = len(stripped) - len(stripped.lstrip("#"))
 
@@ -19,7 +20,7 @@ def split_sections(markdown):
 
         # If the line is a heading, start a new section; otherwise, add the line to the current section's text.
         if is_heading:
-            if current is not None:
+            if "\n".join(current["lines"]).strip():  # Only finish the current section if it has any text
                 sections.append(_finish_section(current))
 
             heading = stripped.lstrip("#").strip()
@@ -30,12 +31,13 @@ def split_sections(markdown):
             current = {"section": heading, "lines": []}
 
         # If the line is not a heading and there is a current section, add the line to the current section's lines.
-        elif current is not None:
+        else:
             current["lines"].append(line)
 
     # After processing all lines, if there is a current section, finalize it and add it to the sections list.
-    if current is not None:
+    if "\n".join(current["lines"]).strip():
         sections.append(_finish_section(current))
+
 
     return sections
 
@@ -44,4 +46,3 @@ def _finish_section(current):
     Finalises the current section by joining its lines into a single text string and returning a dictionary with the section name and text.
     """
     return {"section": current["section"], "text": "\n".join(current["lines"]).strip()}
-
