@@ -1,4 +1,4 @@
-from rag.chunking import split_sections
+from rag.chunking import split_sections, parse_frontmatter
 
 MD = "# PTO Policy\nIntro text.\n## Accrual\nYou earn 1.5 days a month.\n## Carryover\nMax 5 days."
 
@@ -12,3 +12,25 @@ def test_split_sections_keeps_text_before_first_heading():
     md = "Effective 2026-01-01.\n# PTO Policy\nBody."
     assert split_sections(md)[0] == {"section": "Preamble", "text": "Effective 2026-01-01."}
 
+def test_split_sections_skips_heading_with_no_body():
+    md = "# Title\n## Accrual\nYou earn 1.5 days."
+    assert [s["section"] for s in split_sections(md)] == ["Accrual"]
+
+def test_parse_frontmatter_reads_policy_id():
+    md = "---\npolicy_id: FIN-204\n---\n# Expenses\nBody."
+    meta, body = parse_frontmatter(md)
+    assert meta["policy_id"] == "FIN-204"
+
+def test_parse_frontmatter_strips_quotes_from_values():
+    md = '---\nversion: "1.4"\n---\nBody.'
+    meta, _ = parse_frontmatter(md)
+    assert meta["version"] == "1.4"
+
+def test_parse_frontmatter_returns_body_after_fence():
+    md = "---\npolicy_id: FIN-204\n---\n# Expenses\nBody."
+    _, body = parse_frontmatter(md)
+    assert body == "# Expenses\nBody."
+
+def test_parse_frontmatter_without_frontmatter_returns_input_unchanged():
+    md = "# Expenses\nBody."
+    assert parse_frontmatter(md) == ({}, md)
