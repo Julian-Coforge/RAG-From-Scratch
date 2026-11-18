@@ -7,10 +7,13 @@ def parse_frontmatter(markdown):
     # Check if the markdown starts with frontmatter indicated by '---'. If it does, split the markdown into frontmatter and body. Otherwise, return an empty metadata dictionary and the original markdown as the body.
     if markdown.startswith("---"):
         parts = markdown.split("---", 2)
+
+        # If there are at least three parts after splitting, the second part is treated as frontmatter and the third part as the body. The frontmatter is parsed line by line to extract key-value pairs, which are stored in a metadata dictionary. Lines without a colon are ignored, and leading/trailing whitespace and surrounding quotes on values are stripped.
         if len(parts) >= 3:
             frontmatter = parts[1].strip()
             body = parts[2].strip()
             meta = {}
+
             # Parse each line of the frontmatter to extract key-value pairs. Lines without a colon are ignored. Leading and trailing whitespace is stripped from keys and values, and any surrounding quotes on values are removed.
             for line in frontmatter.splitlines():
                 if ":" in line:
@@ -18,7 +21,6 @@ def parse_frontmatter(markdown):
                     meta[key.strip()] = value.strip().strip('"').strip("'")  # Remove surrounding quotes if present
             return meta, body
     return {}, markdown
-
 
 def split_sections(markdown):
     """
@@ -72,3 +74,26 @@ def _append_if_content(sections, current):
     """
     if "\n".join(current["lines"]).strip():
         sections.append(_finish_section(current))
+
+def chunk_text(text, size, overlap):
+    """
+    Splits a text string into chunks of a specified size with a specified overlap between chunks.
+    """
+
+    if overlap >= size:
+        raise ValueError("Overlap must be smaller than chunk size.")
+
+    words = text.split()
+    chunks = []
+    start = 0
+
+    # Loop through the words in the text, creating chunks of the specified size and overlap. The loop continues until all words have been processed. Each chunk is created by joining a slice of the words list from the current start index to the end index, which is determined by the specified size. If the end index reaches the end of the words list, the loop breaks to avoid creating an empty chunk. The start index is then updated to create the next chunk, taking into account the specified overlap.
+    while start < len(words):
+        end = min(start + size, len(words))
+        chunks.append(" ".join(words[start:end]))
+        # If the end index reaches the end of the words list, break the loop to avoid creating an empty chunk.
+        if end == len(words):
+            break        
+        start += size - overlap
+
+    return chunks

@@ -1,4 +1,5 @@
-from rag.chunking import split_sections, parse_frontmatter
+from rag.chunking import split_sections, parse_frontmatter, chunk_text
+import pytest
 
 MD = "# PTO Policy\nIntro text.\n## Accrual\nYou earn 1.5 days a month.\n## Carryover\nMax 5 days."
 
@@ -35,3 +36,25 @@ def test_parse_frontmatter_without_frontmatter_returns_input_unchanged():
     md = "# Expenses\nBody."
     assert parse_frontmatter(md) == ({}, md)
 
+def test_chunk_text_short_text_gives_one_chunk():
+    assert chunk_text("one two three", size=5, overlap=1) == ["one two three"]
+
+def test_chunk_text_no_extra_chunk_when_window_reaches_end():
+    assert chunk_text("a b c d e", size=5, overlap=1) == ["a b c d e"]
+
+def test_chunk_text_rejects_overlap_not_smaller_than_size():
+    with pytest.raises(ValueError):
+        chunk_text("a b c", size=3, overlap=3)
+
+def test_chunk_text_nothing_lost():
+    words = " ".join(f"w{i}" for i in range(12))
+    assert chunk_text(words, size=5, overlap=1)[-1].split()[-1] == "w11"
+
+WORDS_12 = " ".join(f"w{i}" for i in range(12))
+
+def test_chunk_text_no_chunk_exceeds_size():
+    assert all(len(c.split()) <= 5 for c in chunk_text(WORDS_12, size=5, overlap=1))
+
+def test_chunk_text_neighbouring_chunks_share_overlap():
+    chunks = chunk_text(WORDS_12, size=5, overlap=1)
+    assert chunks[0].split()[-1:] == chunks[1].split()[:1]
