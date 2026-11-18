@@ -34,3 +34,4 @@ def test_parse_frontmatter_returns_body_after_fence():
 def test_parse_frontmatter_without_frontmatter_returns_input_unchanged():
     md = "# Expenses\nBody."
     assert parse_frontmatter(md) == ({}, md)
+
