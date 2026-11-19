@@ -93,3 +93,7 @@ def test_real_embedder_retrieves_semantically_related_chunk(collection):
     embed = make_embedder("all-MiniLM-L6-v2")
     add_chunks(collection, CHUNKS, embed)
     assert search(collection, "How much can I spend on food each day?", embed, k=1)[0]["section"] == "Meals"
+
+def test_search_result_includes_frontmatter_metadata(collection, fake_embed):
+    add_chunks(collection, CHUNKS, fake_embed)
+    assert search(collection, "what is the cap", fake_embed, k=1)[0]["status"] == "superseded"

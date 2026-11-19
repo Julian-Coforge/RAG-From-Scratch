@@ -1,0 +1,269 @@
+# Codebase Guide
+
+A living reference for every file in this project: what each file does, and what each function inside it does. It is updated as the project grows.
+
+> **Why this file is not in `docs/`:** `docs/` is the RAG corpus. `build_index` indexes every `*.md` file in that folder, so a code guide placed there would be embedded and retrieved as if it were a company policy.
+
+## Pipeline at a glance
+
+```
+docs/*.md
+  -> parse_frontmatter   (YAML metadata: policy_id, version, status, ...)
+  -> split_sections      (one piece per markdown heading)
+  -> chunk_text          (180-word windows, 30-word overlap)
+  -> add_chunks          (embed with all-MiniLM-L6-v2, upsert into chromadb)
+  -> search              (embed the question, return top-k closest chunks)
+```
+
+| Status | Part |
+|---|---|
+| Done | Chunking, embedding and storage, ingest, retrieval CLI |
+| Next | LLM answer generation (`rag/answer.py`) |
+| Later | Hybrid search, reranking, eval harness, diagnosis, source attribution, CI |
+
+---
+
+## `rag/chunking.py`
+
+Turns one markdown policy document into a list of chunk dictionaries ready for embedding. It splits by section first, then by word window, and copies the document's frontmatter onto every chunk. Pure Python with no dependencies, so it is fast to test.
+
+### `parse_frontmatter(markdown)`
+
+Splits a document into its YAML-style frontmatter and its body.
+
+- **Input:** the full markdown string.
+- **Returns:** `(meta, body)`. `meta` is a dict such as `{"policy_id": "FIN-204", "version": "1.4", "status": "superseded"}`.
+- Only runs if the text starts with `---`. Otherwise it returns `({}, markdown)` unchanged.
+- Each `key: value` line is split on the first colon, so values that contain colons survive. Surrounding quotes are stripped (`"1.4"` becomes `1.4`).
+- Lines without a colon are ignored. This is a minimal parser, not full YAML: nested lists and multi-line values are not supported.
+
+### `split_sections(markdown)`
+
+Splits a markdown body into sections, one per heading.
+
+- **Returns:** a list of `{"section": <heading text>, "text": <body text>}`.
+- A line is a heading if it starts with one or more `#` characters followed by whitespace or the end of the line. So `#hashtag` is not a heading.
+- Text before the first heading goes into a section called `"Preamble"`.
+- Headings with no body text are skipped, via `_append_if_content`.
+- Closing hashes are removed: `## Meals ##` becomes `Meals`.
+- The section name is later used as the source-attribution label.
+
+### `_finish_section(current)` (private)
+
+Converts the in-progress section, `{"section", "lines"}`, into its final form, `{"section", "text"}`. It joins the lines with newlines and strips the result. It is a pure function and does not mutate its argument.
+
+### `_append_if_content(sections, current)` (private)
+
+Appends the finished section to `sections` only if its text is not blank. Both places in `split_sections` that close a section (on a new heading, and at end of file) share this function.
+
+### `chunk_text(text, size, overlap)`
+
+Splits text into overlapping windows of words.
+
+- **Returns:** a list of strings, each at most `size` words long.
+- Each window starts `size - overlap` words after the previous one, so neighbouring chunks share `overlap` words.
+- It stops as soon as a window reaches the last word, so it never produces a redundant tail chunk.
+- Raises `ValueError` if `overlap >= size`. Without this check the start index would never advance, and the loop would run forever.
+- It counts words, not characters, so no word is ever cut in half.
+
+### `chunk_document(markdown, source, size=180, overlap=30)`
+
+The public entry point. It runs `parse_frontmatter`, then `split_sections`, then `chunk_text`.
+
+- **Returns:** a list of chunk dicts. Each one contains:
+  - every frontmatter field;
+  - `id`: `"<source>::<section>::<index>"`, which is unique and stable across runs, so upserts replace the old chunk instead of duplicating it;
+  - `chunk`: the text;
+  - `section`;
+  - `source`: the file name.
+- Frontmatter is unpacked first, so the pipeline's own keys win if a frontmatter key has the same name.
+- `size=180` stays under all-MiniLM-L6-v2's 256-token limit. Text past that limit would be cut off before embedding.
+- `overlap=30` (about 15%) keeps a sentence that crosses a window boundary whole in at least one chunk.
+- On the current corpus every section fits in one chunk; the largest is about 165 words.
+
+---
+
+## `rag/store.py`
+
+The embedding and vector-store layer, a thin wrapper around sentence-transformers and chromadb. The embedding function is passed in as a parameter, so tests can use a fast fake embedder instead of loading the real model.
+
+### `make_embedder(model_name)`
+
+Loads a `SentenceTransformer` model once and returns a closure, `embed_function(texts)`.
+
+- Call it once per process. Loading the model is the slow part.
+- In production `model_name` is `"all-MiniLM-L6-v2"`: 384 dimensions, maximum 256 tokens.
+
+#### `embed_function(texts)` (inner closure)
+
+Encodes a list of strings and returns plain Python lists of floats, which is what chromadb accepts.
+
+### `add_chunks(collection, chunks, embed_function)`
+
+Embeds chunks and stores them in a chromadb collection.
+
+- Returns immediately for an empty list. chromadb raises `ValueError` on an empty write.
+- The chunk text is stored as the document. Every other field except `id` and `chunk` is stored as metadata, so the text is not stored twice.
+- Uses `upsert`, not `add`. Re-running ingest replaces existing ids instead of silently ignoring them.
+- Metadata values must be `str`, `int`, `float` or `bool`. chromadb rejects `None`, lists and dicts.
+
+### `search(collection, query, embed_function, k=5)`
+
+Embeds the query and returns the `k` nearest chunks, closest first.
+
+- **Returns:** a list of dicts. Each one contains every stored metadata field (`section`, `source`, `policy_id`, `version`, `status`, ...), plus:
+  - `id`;
+  - `chunk`;
+  - `distance`: a float, where lower means closer.
+- Metadata is unpacked first, so `id`, `chunk` and `distance` cannot be overwritten by a stored field.
+- chromadb caps `k` at the collection size.
+
+---
+
+## `rag/ingest.py`
+
+Connects chunking to storage: it builds the whole index from a folder of documents.
+
+### `build_index(folder, collection, embedder)`
+
+Chunks every `*.md` file in `folder` and stores all the chunks in one `add_chunks` call.
+
+- **Returns:** the number of chunks indexed. This is 20 for the current `docs/`.
+- `folder` can be a `str` or a `Path`.
+- Files are processed in sorted order, so results are the same on every machine.
+- Only matches `*.md` and does not search subfolders.
+- Running it twice is safe and adds no duplicates, because `add_chunks` upserts.
+
+---
+
+## `rag/ask.py`
+
+The command-line entry point. It rebuilds the index, then prints the top-k chunks for a question with their source, section, version and status.
+
+```bash
+HF_HUB_OFFLINE=1 python -m rag.ask "How many days a week can I work from home?" --k 5
+```
+
+Module constants:
+- `PROJECT_ROOT`, `DOCS_DIR`, `DB_DIR`: paths built from the file's own location, so the script works from any working directory.
+- `MODEL_NAME`: `"all-MiniLM-L6-v2"`.
+- `COLLECTION_NAME`: `"policies"`.
+
+### `get_collection()`
+
+Opens the on-disk chromadb collection in `chroma_db/`, creating it if needed. `chroma_db/` is listed in `.gitignore`.
+
+### `main()`
+
+1. Parses the arguments: `question` and `--k`, which defaults to 3.
+2. Loads the embedder once.
+3. Re-indexes `docs/`. This takes about a second for 20 chunks.
+4. Prints each ranked result as `[rank] distance=... source > section (vVERSION, STATUS)`, followed by the first 200 characters of the chunk.
+
+---
+
+## `example_loop/minimal_loop.py`
+
+Part 2's minimal loop: a standalone script that proves embed, store and retrieve work before any pipeline code exists. It embeds 3 sentences into an in-memory chromadb collection and asks "How many days can I work from home?". It then asserts that the remote-work sentence ranks first and prints `PASS`. It has no functions; it is a top-to-bottom script.
+
+---
+
+## `docs/` (the corpus)
+
+Four policy documents, each with YAML frontmatter.
+
+| File | Policy | Version | Status |
+|---|---|---|---|
+| `expense-reimbursement-policy-v1.4.md` | FIN-204 | 1.4 | superseded (1 Jan to 30 Sep 2026) |
+| `expense-reimbursement-policy-v2.0.md` | FIN-204 | 2.0 | active (from 1 Oct 2026) |
+| `paid-time-off-policy.md` | HR-305 | | active |
+| `remote-work-policy.md` | HR-101 | 1.2 | active |
+
+**Planted data quality issue:** both expense versions are indexed, and they conflict.
+
+| Rule | v1.4 | v2.0 |
+|---|---|---|
+| Daily meal cap | $55 | $70 |
+| Claim deadline | 45 days | 30 days |
+| Itemised receipt threshold | $50 | $25 |
+
+---
+
+## Tests (`tests/`)
+
+Run the fast suite with `python -m pytest -m "not slow"`. Run everything with `HF_HUB_OFFLINE=1 python -m pytest`; the `slow` tests load the real model.
+
+### `tests/conftest.py`
+
+Shared fixtures. pytest finds this file automatically, and a test gets a fixture by naming it as a parameter.
+
+- `_fake_embed(texts)`: returns a 3-number vector per text: `[count of "cap", count of "economy", 1.0]`. Its distances are predictable, so tests can check the ranking. The constant `1.0` keeps every vector non-zero.
+- `fake_embed` (fixture): returns `_fake_embed`.
+- `collection` (fixture): a fresh, empty chromadb collection with a uuid name. `EphemeralClient` instances share one store per process, so a fixed name would leak data between tests.
+
+### `tests/test_chunking.py` (19 tests)
+
+- **split_sections:**
+  - finds section names;
+  - keeps the body text;
+  - keeps text before the first heading as the Preamble;
+  - skips headings with no body.
+- **parse_frontmatter:**
+  - reads `policy_id`;
+  - strips quotes;
+  - returns the body after the closing fence;
+  - returns input without frontmatter unchanged.
+- **chunk_text:**
+  - short text gives one chunk;
+  - no extra chunk at the end;
+  - rejects overlap >= size;
+  - no words are lost;
+  - no chunk exceeds the size;
+  - neighbouring chunks share the overlap.
+- **chunk_document:** attaches the section, source, `policy_id` and version; ids are unique.
+
+### `tests/test_store.py` (15 tests)
+
+- `_stored_metadata(collection, chunk_id)` (helper): reads back the metadata stored for one id.
+- **add_chunks:**
+  - stores every chunk;
+  - stores the text as the document;
+  - keeps section metadata;
+  - keeps frontmatter metadata;
+  - does not copy the text into metadata;
+  - an empty list stores nothing;
+  - a second call updates the chunk instead of ignoring it.
+- **search:**
+  - returns `k` results;
+  - ranks the closest chunk first;
+  - includes the chunk text;
+  - includes the section;
+  - includes a float distance;
+  - `k` larger than the collection returns everything;
+  - includes frontmatter metadata.
+- **slow:** the real model matches the "food" question to the Meals chunk.
+
+### `tests/test_ingest.py` (8 tests)
+
+- `DOCS_DIR`: the path to the real `docs/` folder.
+- `_write_two_docs(folder)` (helper): writes `a.md` and `b.md` into a temp folder.
+- **build_index:**
+  - stores chunks from every document;
+  - returns the chunk count;
+  - ignores non-`.md` files;
+  - an empty folder returns 0;
+  - carries frontmatter metadata;
+  - running twice adds no duplicates;
+  - accepts a `str` path.
+- **slow:** on the real corpus, the work-from-home question retrieves `remote-work-policy.md` first.
+
+---
+
+## Config files
+
+- `pyproject.toml`: pytest settings:
+  - `pythonpath = ["."]`, so `import rag` works;
+  - `testpaths`;
+  - the `slow` marker;
+  - a filter that hides chromadb's `asyncio` deprecation warning.
+- `.gitignore`: `__pycache__/`, `.venv/`, `*.pyc`, `chroma_db/`.

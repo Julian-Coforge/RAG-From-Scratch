@@ -69,6 +69,7 @@ def search(collection, query, embed_function, k=5):
     Returns:
         A list of dictionaries, each containing 'id', 'chunk', 'section', and 'source' keys for the top-k most relevant chunks.
     """ 
+
     # Generate the embedding for the query using the provided embedding function
     query_embedding = embed_function([query])[0]
     
@@ -82,16 +83,18 @@ def search(collection, query, embed_function, k=5):
     ids = results["ids"][0]
     documents = results["documents"][0]
     metadatas = results["metadatas"][0]
-    distance = results["distances"][0]
-    
-    # Combine the extracted information into a list of dictionaries for each result
+    distances = results["distances"][0]
+
+    # Combine the extracted information into a list of dictionaries for each result.
+    # **metadata first copies every stored field (section, source, policy_id, version,
+    # status, ...); id, chunk and distance are added after so they can't be overwritten.
     return [
         {
+            **metadata,
             "id": id_,
             "chunk": doc,
-            "section": metadata.get("section"),
-            "source": metadata.get("source"),
-            "distance": distance
+            "distance": float(distance),
         }
-        for id_, doc, metadata, distance in zip(ids, documents, metadatas, distance)
+        for id_, doc, metadata, distance in zip(ids, documents, metadatas, distances)
     ]
+
