@@ -1,10 +1,6 @@
 """
 Command-line entry point: index the policy docs and retrieve the chunks most
 relevant to a question.
-
-Usage (from the project root):
-    python -m rag.ask "How many days a week can I work from home?"
-    python -m rag.ask "What is the meal allowance?" --k 5
 """
 import argparse
 from pathlib import Path
@@ -14,11 +10,9 @@ import chromadb
 from rag.ingest import build_index
 from rag.store import make_embedder, search
 
-# Paths are resolved from the project root so the script works from any cwd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = PROJECT_ROOT / "docs"
 DB_DIR = PROJECT_ROOT / "chroma_db"
-
 MODEL_NAME = "all-MiniLM-L6-v2"
 COLLECTION_NAME = "policies"
 
@@ -38,9 +32,7 @@ def main():
     # Load the embedding model once and reuse it for both indexing and the query
     embed = make_embedder(MODEL_NAME)
 
-    # (Re)index the docs on every run. add_chunks upserts, so this refreshes
-    # changed chunks without duplicating them; the corpus is small enough
-    # (~20 chunks) that this takes about a second.
+    # Build the index (if not already built) and open the collection
     collection = get_collection()
     count = build_index(DOCS_DIR, collection, embed)
     print(f"Indexed {count} chunks from {DOCS_DIR.name}/ into {DB_DIR.name}/ (collection size: {collection.count()})")
@@ -49,6 +41,7 @@ def main():
     results = search(collection, args.question, embed, k=args.k)
 
     print(f"\nQuestion: {args.question}\n")
+
     for rank, r in enumerate(results, start=1):
         print(f"[{rank}] distance={r['distance']:.4f}  {r['source']} > {r['section']}"
               f"  (v{r.get('version', '?')}, {r.get('status', 'n/a')})")

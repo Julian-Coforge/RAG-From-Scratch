@@ -18,7 +18,7 @@ docs/*.md
 | Status | Part |
 |---|---|
 | Done | Chunking, embedding and storage, ingest, retrieval CLI |
-| Next | LLM answer generation (`rag/answer.py`) |
+| In progress | LLM answer generation (`rag/answer.py`) |
 | Later | Hybrid search, reranking, eval harness, diagnosis, source attribution, CI |
 
 ---
@@ -133,6 +133,21 @@ Chunks every `*.md` file in `folder` and stores all the chunks in one `add_chunk
 - Files are processed in sorted order, so results are the same on every machine.
 - Only matches `*.md` and does not search subfolders.
 - Running it twice is safe and adds no duplicates, because `add_chunks` upserts.
+
+---
+
+## `rag/answer.py` (in progress, `feature/answer`)
+
+Turns retrieved chunks and a question into a grounded LLM answer with sources.
+
+### `build_prompt(question, results)`
+
+Builds the prompt text sent to the LLM.
+
+- **Input:** the question, and the result dicts returned by `search`.
+- **Returns:** a string.
+- **Current behaviour:** includes the question.
+- **Planned:** include every chunk's text, labelled `[n] source > section`, so the model can cite its sources.
 
 ---
 
@@ -256,6 +271,11 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
   - running twice adds no duplicates;
   - accepts a `str` path.
 - **slow:** on the real corpus, the work-from-home question retrieves `remote-work-policy.md` first.
+
+### `tests/test_answer.py` (1 test, growing)
+
+- `CHUNKS`: two fake search results (Meals, Travel) from `a.md`.
+- **build_prompt:** includes the question.
 
 ---
 
