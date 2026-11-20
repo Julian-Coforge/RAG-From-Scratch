@@ -140,6 +140,16 @@ Chunks every `*.md` file in `folder` and stores all the chunks in one `add_chunk
 
 Turns retrieved chunks and a question into a grounded LLM answer with sources.
 
+Module constants:
+
+- `MODEL`: `"claude-opus-5-5"`.
+- `SYSTEM_PROMPT`: the rules Claude follows for every answer:
+  - answer only from the numbered chunks;
+  - cite inline as `[n]`;
+  - if the answer isn't there, say "I couldn't find that in the policy documents.";
+  - when versions conflict, answer from the `active` chunk and mention the `superseded` figure;
+  - keep answers short.
+
 ### `build_prompt(question, results)`
 
 Builds the prompt text sent to the LLM.
@@ -162,6 +172,20 @@ Produces the final answer.
 - `llm_fn` is passed in as a parameter: any function that takes a prompt string and returns text. Tests pass a fake, so they never call the API.
 - If `results` is empty, it returns immediately with a "Couldn't find..." message, `prompt: None` and `sources: []`. `llm_fn` is never called, which saves an API call and stops the model answering from general knowledge.
 - `sources` is a list of `"source > section"` strings in rank order. They are built from the retrieved metadata, not from the LLM's output, so they are always accurate (Part 7, attribution).
+
+### `make_claude_llm(model=MODEL)`
+
+Creates the real `llm_fn`.
+
+- Creates one `anthropic.Anthropic()` client, which reads `ANTHROPIC_API_KEY` from the environment, and returns a closure that reuses it. This is the same factory pattern as `make_embedder`.
+- It has no unit test, because it is a thin wrapper around the API. A one-line smoke test checks it, and Part 5's eval covers it end to end.
+
+#### `llm_fn(prompt)` (inner closure)
+
+Calls `client.messages.create` with `SYSTEM_PROMPT` and `max_tokens=1024`.
+
+- If `stop_reason == "refusal"`, it returns a short fallback message.
+- Otherwise it joins the `.text` of every block whose `type == "text"`. SDK blocks are objects, not dicts, so it uses attribute access.
 
 ---
 
@@ -300,6 +324,12 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
   - lists sources in rank order;
   - with no results, does not call the LLM;
   - with no results, says "couldn't find".
+
+---
+
+## Secrets
+
+`ANTHROPIC_API_KEY` is set in `~/.zshrc`, never in a file inside the repo. For CI it goes in the GitHub repo's Secrets.
 
 ---
 

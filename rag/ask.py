@@ -9,6 +9,8 @@ import chromadb
 
 from rag.ingest import build_index
 from rag.store import make_embedder, search
+from rag.answer import answer, make_claude_llm
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOCS_DIR = PROJECT_ROOT / "docs"
@@ -46,6 +48,13 @@ def main():
         print(f"[{rank}] distance={r['distance']:.4f}  {r['source']} > {r['section']}"
               f"  (v{r.get('version', '?')}, {r.get('status', 'n/a')})")
         print(f"    {r['chunk'][:200]}{'...' if len(r['chunk']) > 200 else ''}\n")
+
+    result = answer(args.question, results, make_claude_llm())
+    print(f"Answer:\n{result['text']}\n")
+    print("Sources:")
+    for i, source in enumerate(result["sources"], start=1):
+        print(f"  [{i}] {source}")
+
 
 
 if __name__ == "__main__":
