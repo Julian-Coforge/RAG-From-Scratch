@@ -19,8 +19,9 @@ docs/*.md
 |---|---|
 | Done | Chunking, embedding and storage, ingest, retrieval CLI |
 | Done | LLM answer generation with sources (`rag/answer.py`) |
-| In progress | Hybrid search (`rag/hybrid.py`) |
-| Later | Reranking, eval harness, diagnosis write-up, CI |
+| Done | Hybrid search (`rag/hybrid.py`) |
+| In progress | Reranking (`rag/rerank.py`) |
+| Later | Eval harness, diagnosis write-up, CI |
 
 ---
 
@@ -239,34 +240,70 @@ Takes `candidates` results from vector search and from keyword search, fuses the
 
 ---
 
+## `rag/rerank.py` (`feature/rerank`)
+
+Second-stage reranking with a CrossEncoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`). A bi-encoder embeds the query and each chunk separately and compares the vectors. A cross-encoder reads the query and chunk together in one pass, so it judges relevance more precisely, but it is slower. It is therefore run only on the top ~10 candidates from hybrid search.
+
+### `make_reranker(model_name)`
+
+Loads the `CrossEncoder` once and returns a closure, `scorer(pairs)`. This is the same factory pattern as `make_embedder` and `make_claude_llm`.
+
+#### `scorer(pairs)` (inner closure)
+
+Takes a list of `(query, chunk)` tuples and returns one float per pair; higher means more relevant. It converts numpy values to plain Python floats.
+
+### `rerank(query, results, scorer, top_n=3)`
+
+Re-scores the retrieved results and returns the top `top_n` as `[{**r, "rerank_score"}]`, best first.
+
+- With empty `results`, it returns `[]` without calling the scorer.
+- It calls the scorer once with every pair, in a single batch.
+- It builds new dicts instead of modifying the input, so the caller can still print the original order for a before/after comparison.
+- **Demo:** for the peripherals query, the Equipment chunk goes from #2 after hybrid to #1 after rerank.
+
+---
+
 ## `rag/ask.py`
 
-The command-line entry point. It rebuilds the index, then prints the top-k chunks for a question with their source, section, version and status.
+The command-line entry point. It rebuilds the index, retrieves the chunks for a question (vector or hybrid, optionally reranked), prints them, and then prints Claude's cited answer and the sources.
 
 ```bash
-HF_HUB_OFFLINE=1 python -m rag.ask "How many days a week can I work from home?" --k 5
+HF_HUB_OFFLINE=1 python -m rag.ask "Can I get reimbursed for extra peripherals?" --mode hybrid --rerank --k 3
 ```
 
 Module constants:
 - `PROJECT_ROOT`, `DOCS_DIR`, `DB_DIR`: paths built from the file's own location, so the script works from any working directory.
 - `MODEL_NAME`: `"all-MiniLM-L6-v2"`.
+- `RERANK_MODEL`: `"cross-encoder/ms-marco-MiniLM-L-6-v2"`.
+- `RERANK_CANDIDATES`: 10, the size of the pool retrieved before reranking.
 - `COLLECTION_NAME`: `"policies"`.
 
 ### `get_collection()`
 
 Opens the on-disk chromadb collection in `chroma_db/`, creating it if needed. `chroma_db/` is listed in `.gitignore`.
 
+### `score_label(r)`
+
+Returns the score that decided a result's rank, checking the most specific first: `rerank=`, then `rrf=`, then `distance=`. A keyword-only hybrid hit has no distance, so this avoids a `KeyError`.
+
+### `print_results(results, preview=True)`
+
+Prints each result as `[rank] <score> source > section (vVERSION, STATUS)`. With `preview=True` it adds a 200-character preview of the chunk. The compact form is used for the "Before rerank" list.
+
 ### `main()`
 
 1. Parses the arguments:
    - `question`;
    - `--k`, which defaults to 3;
-   - `--mode vector|hybrid`, which defaults to `hybrid`.
+   - `--mode vector|hybrid`, which defaults to `hybrid`;
+   - `--rerank`.
 2. Loads the embedder once.
 3. Re-indexes `docs/`. This takes about a second for 20 chunks.
-4. Retrieves the chunks with `search` or `hybrid_search`.
-5. Prints the mode and the question, then each ranked result as `[rank] <score> source > section (vVERSION, STATUS)`, followed by a 200-character preview. The score is `rrf=` in hybrid mode and `distance=` in vector mode. A keyword-only hybrid hit has no distance.
-6. Calls `answer(..., make_claude_llm())` and prints `Answer:` and the numbered `Sources:`.
+4. Retrieves the chunks with `search` or `hybrid_search`: `k` results, or `RERANK_CANDIDATES` when `--rerank` is set.
+5. Prints the mode and the question.
+6. With `--rerank`, it prints the candidates compactly under "Before rerank", reranks them down to `k`, then prints "After rerank".
+7. Prints the final results with previews.
+8. Calls `answer(..., make_claude_llm())` and prints `Answer:` and the numbered `Sources:`.
 
 ---
 
@@ -410,6 +447,27 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
 - **slow** (real corpus, "Can I get reimbursed for extra peripherals?"):
   - vector-only top 3 misses the Equipment chunk;
   - hybrid top 3 includes it.
+
+### `tests/test_rerank.py` (13 tests, 3 slow, `feature/rerank`)
+
+- `RESULTS`: three fake candidates.
+- `_fake_scorer`: scores each chunk by how many times it says "peripherals".
+- `_exploding_scorer`: raises if called.
+- **rerank:**
+  - the highest-scored chunk comes first;
+  - all results are ordered by score;
+  - returns at most `top_n`;
+  - a `top_n` larger than the input returns everything;
+  - each result has a float `rerank_score`;
+  - original fields are kept;
+  - the scorer receives `(query, chunk)` pairs;
+  - the input list is not modified;
+  - empty input does not call the scorer;
+  - empty input returns an empty list.
+- **slow** (`cross-encoder/ms-marco-MiniLM-L-6-v2`):
+  - `make_reranker` returns one float per pair;
+  - a relevant chunk scores higher than an irrelevant one;
+  - on the real corpus, hybrid top 10 followed by rerank puts `Equipment and information security` at #1 for the peripherals query.
 
 ---
 
