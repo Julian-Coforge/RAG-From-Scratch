@@ -4,11 +4,6 @@ from sentence_transformers import SentenceTransformer
 def make_embedder(model_name):
     """
     Creates an embedding function using the specified model from the sentence-transformers library.
-
-    Args:
-        model_name: The name of the model to use for generating embeddings.
-    Returns:
-        A function that takes a list of texts and returns their embeddings.
     """
     # Load the specified model from the sentence-transformers library
     model = SentenceTransformer(model_name)
@@ -16,11 +11,6 @@ def make_embedder(model_name):
     def embed_function(texts):
         """
         Generates embeddings for a list of texts using the loaded model.
-
-        Args:
-            texts: A list of strings to be embedded.
-        Returns:
-            A list of embeddings corresponding to the input texts.
         """
         return model.encode(texts, convert_to_numpy=True).tolist()
 
@@ -29,11 +19,6 @@ def make_embedder(model_name):
 def add_chunks(collection, chunks, embed_function):
     """
     Adds a list of chunks to a ChromaDB collection, embedding each chunk using the provided embedding function.
-
-    Args:
-        collection: The ChromaDB collection to which the chunks will be added.
-        chunks: A list of dictionaries, each containing 'id', 'chunk', 'section', and 'source' keys.
-        embed_function: A function that takes a list of texts and returns their embeddings.
     """
 
     if not chunks:
@@ -60,14 +45,6 @@ def add_chunks(collection, chunks, embed_function):
 def search(collection, query, embed_function, k=5):
     """
     Searches for the top-k most relevant chunks in a ChromaDB collection based on a query.
-
-    Args:
-        collection: The ChromaDB collection to search.
-        query: The search query string.
-        embed_function: A function that takes a list of texts and returns their embeddings.
-        k: The number of top results to return (default is 5).
-    Returns:
-        A list of dictionaries, each containing 'id', 'chunk', 'section', and 'source' keys for the top-k most relevant chunks.
     """ 
 
     # Generate the embedding for the query using the provided embedding function
@@ -85,9 +62,7 @@ def search(collection, query, embed_function, k=5):
     metadatas = results["metadatas"][0]
     distances = results["distances"][0]
 
-    # Combine the extracted information into a list of dictionaries for each result.
-    # **metadata first copies every stored field (section, source, policy_id, version,
-    # status, ...); id, chunk and distance are added after so they can't be overwritten.
+    
     return [
         {
             **metadata,
