@@ -1,5 +1,8 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-markers = ["slow: loads a real sentence-transformers model (deselect with -m 'not slow')"]
+markers = [
+    "slow: loads a real sentence-transformers model (deselect with -m 'not slow')",
+    "eval: calls the Claude API (paid); skipped when ANTHROPIC_API_KEY is not set",
+]
 filterwarnings = ["ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning"]
