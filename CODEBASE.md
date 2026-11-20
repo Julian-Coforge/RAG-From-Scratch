@@ -18,8 +18,9 @@ docs/*.md
 | Status | Part |
 |---|---|
 | Done | Chunking, embedding and storage, ingest, retrieval CLI |
-| In progress | LLM answer generation (`rag/answer.py`) |
-| Later | Hybrid search, reranking, eval harness, diagnosis, source attribution, CI |
+| Done | LLM answer generation with sources (`rag/answer.py`) |
+| In progress | Hybrid search (`rag/hybrid.py`) |
+| Later | Reranking, eval harness, diagnosis write-up, CI |
 
 ---
 
@@ -189,6 +190,55 @@ Calls `client.messages.create` with `SYSTEM_PROMPT` and `max_tokens=1024`.
 
 ---
 
+## `rag/hybrid.py` (`feature/hybrid`)
+
+Hybrid retrieval: a hand-built BM25 keyword search, fused with vector search using Reciprocal Rank Fusion. Embeddings blur exact identifiers and rare terms. Keyword search matches them exactly but misses paraphrases. Fusing the two gets the strengths of both.
+
+Module constants:
+
+- `TOKEN_PATTERN`: runs of `[a-z0-9]`, optionally joined by hyphens, so `FIN-204` stays one token.
+- `BM25_K1 = 1.5`: term-frequency saturation.
+- `BM25_B = 0.75`: length normalisation.
+
+### `tokenize(text)`
+
+Lowercases the text and returns its word tokens with punctuation removed. `"$70,"` becomes `"70"` and `"FIN-204."` becomes `"fin-204"`.
+
+### `keyword_search(chunks, query, k=5)`
+
+Scores each chunk against the query with BM25.
+
+- **Returns:** `[{**chunk, "score"}]`, best first.
+- Chunks with no matching term are left out.
+- **IDF:** rare terms such as `fin-204` outweigh common ones such as `policy`.
+- **Saturating TF:** repeating a word helps less each time.
+- **Length normalisation:** long chunks don't win just by containing more words.
+- An empty `chunks` list returns `[]`.
+
+### `rrf_fuse(rankings, k=60)`
+
+Merges ranked lists. Each item scores `sum(1 / (k + rank))` over the lists it appears in.
+
+- **Returns:** a list deduplicated by `id`, keeping the first-seen copy of each item plus its `rrf_score`.
+- It works on ranks, not raw scores, so BM25 scores and cosine distances never have to share a scale.
+- `k` is the smoothing constant (60 is the standard value). It is not the number of results.
+
+### `_all_chunks(collection)` (private)
+
+Reads every stored chunk back out of chromadb as `{**metadata, "id", "chunk"}`. BM25 needs the whole corpus to compute document frequencies.
+
+### `hybrid_search(collection, query, embed_function, k=5, candidates=20)`
+
+Takes `candidates` results from vector search and from keyword search, fuses them, and returns the top `k`.
+
+- `candidates` is larger than `k` on purpose, so a chunk ranked low by one retriever but high by the other can still win.
+- Vector results are passed first, so their copy, which carries `distance`, is the one kept.
+- **Demo query (real model):** "Can I get reimbursed for extra peripherals?"
+  - Vector-only top 3 are all expense chunks, which miss the answer.
+  - Hybrid lifts `remote-work-policy.md > Equipment and information security` to #2, through an exact match on "peripherals".
+
+---
+
 ## `rag/ask.py`
 
 The command-line entry point. It rebuilds the index, then prints the top-k chunks for a question with their source, section, version and status.
@@ -208,10 +258,15 @@ Opens the on-disk chromadb collection in `chroma_db/`, creating it if needed. `c
 
 ### `main()`
 
-1. Parses the arguments: `question` and `--k`, which defaults to 3.
+1. Parses the arguments:
+   - `question`;
+   - `--k`, which defaults to 3;
+   - `--mode vector|hybrid`, which defaults to `hybrid`.
 2. Loads the embedder once.
 3. Re-indexes `docs/`. This takes about a second for 20 chunks.
-4. Prints each ranked result as `[rank] distance=... source > section (vVERSION, STATUS)`, followed by the first 200 characters of the chunk.
+4. Retrieves the chunks with `search` or `hybrid_search`.
+5. Prints the mode and the question, then each ranked result as `[rank] <score> source > section (vVERSION, STATUS)`, followed by a 200-character preview. The score is `rrf=` in hybrid mode and `distance=` in vector mode. A keyword-only hybrid hit has no distance.
+6. Calls `answer(..., make_claude_llm())` and prints `Answer:` and the numbered `Sources:`.
 
 ---
 
@@ -324,6 +379,37 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
   - lists sources in rank order;
   - with no results, does not call the LLM;
   - with no results, says "couldn't find".
+
+### `tests/test_hybrid.py` (23 tests, 2 slow, `feature/hybrid`)
+
+- **tokenize:**
+  - lowercases;
+  - strips punctuation;
+  - keeps hyphenated IDs such as `fin-204` whole.
+- **keyword_search** (on `KW_CHUNKS` and `IDF_CHUNKS`):
+  - an exact term match ranks first;
+  - chunks with no matching term are excluded;
+  - no match returns an empty list;
+  - returns at most `k` results;
+  - each result has a float score;
+  - other chunk fields are kept;
+  - a rare term outranks a repeated common term (IDF).
+- **rrf_fuse:**
+  - an item first in both lists ranks first;
+  - an item in both lists beats an item at the top of only one;
+  - no duplicates;
+  - the score is `1/(k+rank)`;
+  - item fields are kept;
+  - an empty input returns an empty list.
+- **hybrid_search:**
+  - **sanity check:** vector-only misses the exact-ID chunk. The fake embedder counts substrings, so it sees "caps" as "cap";
+  - hybrid ranks the exact-ID chunk first;
+  - returns `k` results;
+  - keeps the metadata;
+  - includes the chunk text.
+- **slow** (real corpus, "Can I get reimbursed for extra peripherals?"):
+  - vector-only top 3 misses the Equipment chunk;
+  - hybrid top 3 includes it.
 
 ---
 
