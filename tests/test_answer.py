@@ -19,3 +19,15 @@ def _fake_llm(prompt):
 
 def test_answer_returns_llm_text():
     assert answer("What is the meal cap?", CHUNKS, _fake_llm)["text"] == "The cap is $70 [1]."
+
+def test_answer_lists_sources_in_rank_order():
+    assert answer("q", CHUNKS, _fake_llm)["sources"] == ["a.md > Meals", "a.md > Travel"]
+
+def _exploding_llm(prompt):
+    raise AssertionError("LLM should not be called when nothing was retrieved")
+
+def test_answer_with_no_results_does_not_call_llm():
+    answer("q", [], _exploding_llm)  # raises if llm_fn is called
+
+def test_answer_with_no_results_says_it_could_not_find():
+    assert "couldn't find" in answer("q", [], _exploding_llm)["text"].lower()

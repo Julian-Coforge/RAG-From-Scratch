@@ -145,9 +145,23 @@ Turns retrieved chunks and a question into a grounded LLM answer with sources.
 Builds the prompt text sent to the LLM.
 
 - **Input:** the question, and the result dicts returned by `search`.
-- **Returns:** a string.
-- **Current behaviour:** includes the question.
-- **Planned:** include every chunk's text, labelled `[n] source > section`, so the model can cite its sources.
+- **Returns:** a string. It starts with `Question: ...`, followed by each chunk as:
+  ```
+  [n] Source: <file>, Section: <section>, Version: <v>, Status: <status>
+  <chunk text>
+  ```
+- The `[n]` labels let the model cite its sources inline.
+- `Status` lets the model prefer `active` chunks over `superseded` ones. This is the hook for the planted expense-policy conflict.
+- Missing metadata falls back to `unknown`, `?` or `n/a` instead of raising `KeyError`.
+
+### `answer(question, results, llm_fn)`
+
+Produces the final answer.
+
+- **Returns:** `{"text", "prompt", "sources"}`.
+- `llm_fn` is passed in as a parameter: any function that takes a prompt string and returns text. Tests pass a fake, so they never call the API.
+- If `results` is empty, it returns immediately with a "Couldn't find..." message, `prompt: None` and `sources: []`. `llm_fn` is never called, which saves an API call and stops the model answering from general knowledge.
+- `sources` is a list of `"source > section"` strings in rank order. They are built from the retrieved metadata, not from the LLM's output, so they are always accurate (Part 7, attribution).
 
 ---
 
@@ -272,10 +286,20 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
   - accepts a `str` path.
 - **slow:** on the real corpus, the work-from-home question retrieves `remote-work-policy.md` first.
 
-### `tests/test_answer.py` (1 test, growing)
+### `tests/test_answer.py` (7 tests)
 
 - `CHUNKS`: two fake search results (Meals, Travel) from `a.md`.
-- **build_prompt:** includes the question.
+- `_fake_llm(prompt)`: returns a canned answer.
+- `_exploding_llm(prompt)`: raises if called. It proves the LLM was skipped.
+- **build_prompt:**
+  - includes the question;
+  - includes the chunk text;
+  - labels each chunk as `[n] Source: ..., Section: ...`.
+- **answer:**
+  - returns the LLM text;
+  - lists sources in rank order;
+  - with no results, does not call the LLM;
+  - with no results, says "couldn't find".
 
 ---
 

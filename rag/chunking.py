@@ -101,6 +101,25 @@ def chunk_text(text, size, overlap):
 def chunk_document(markdown, source, size=180, overlap=30):
     """
     Splits a markdown document into chunks, attaching metadata such as section name, source, and policy ID to each chunk.
+
+    Pipeline: parse_frontmatter -> split_sections -> chunk_text (word window).
+
+    Chunking rationale:
+    - Section-aware first: policy questions map onto policy sections ("how much
+      PTO carries over?" -> Carryover), and the section name doubles as the
+      source-attribution label.
+    - size=180 words: all-MiniLM-L6-v2 truncates input at 256 tokens
+      (~180-200 English words), so anything longer would be silently cut off
+      before embedding.
+    - overlap=30 words (~15%): keeps a sentence that straddles a window
+      boundary intact in at least one chunk.
+    - Words, not characters: no word is ever split in half.
+    On the current corpus every section fits in a single chunk (largest is
+    ~165 words), so the word window acts as a safety net for longer sections.
+
+    Every frontmatter field (policy_id, version, status, superseded_by, ...) is
+    copied onto each chunk so retrieved chunks can be traced to the exact
+    document version they came from.
     """
 
     meta, body = parse_frontmatter(markdown)

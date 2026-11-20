@@ -1,5 +1,3 @@
-
-
 def build_prompt(question: str, results: list[dict]) -> str:
     """
     Build a prompt for the LLM that includes the question and the retrieved chunks.
@@ -20,8 +18,15 @@ def build_prompt(question: str, results: list[dict]) -> str:
 
     return prompt.strip()
 
+
 def answer(question, results, llm_fn):
     """Ask the LLM to answer the question using only the retrieved results."""
-    prompt = build_prompt(question, results)
-    text = llm_fn(prompt)
-    return {"text": text, "prompt": prompt}
+    if not results:
+                return {"text": "Couldn't find any relevant information to answer your question.", "prompt": None, "sources": []}
+    else:
+        prompt = build_prompt(question, results)
+        text = llm_fn(prompt)
+        sources = [f"{r.get('source', 'unknown')} > {r.get('section', 'unknown')}" for r in results]
+        return {"text": text, "prompt": prompt, "sources": sources}
+
+
