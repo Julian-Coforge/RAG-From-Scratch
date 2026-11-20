@@ -20,8 +20,9 @@ docs/*.md
 | Done | Chunking, embedding and storage, ingest, retrieval CLI |
 | Done | LLM answer generation with sources (`rag/answer.py`) |
 | Done | Hybrid search (`rag/hybrid.py`) |
-| In progress | Reranking (`rag/rerank.py`) |
-| Later | Eval harness, diagnosis write-up, CI |
+| Done | Reranking (`rag/rerank.py`) |
+| Done | Eval harness (`rag/eval_set.py`, `tests/test_eval.py`) |
+| Done | CI (`.github/workflows/ci.yml`) |
 
 ---
 
@@ -506,6 +507,20 @@ The Part 5 eval harness. It uses the full pipeline: hybrid top 10, then rerank t
 
 ---
 
+## CI (`.github/workflows/ci.yml`)
+
+GitHub Actions runs on every push to `main`, on every pull request, and on manual dispatch. The steps:
+
+1. Set up Python 3.14 with a pip cache.
+2. Install `requirements.txt`, using the CPU-only torch index to avoid the multi-GB CUDA build.
+3. Cache `~/.cache/huggingface`, so both models download only once.
+4. **Unit tests:** `pytest -m "not slow"`.
+5. **Slow tests and evaluation harness:** `pytest -m slow -rs`, with `ANTHROPIC_API_KEY` taken from the repo secret. If the secret is absent, the 11 answer key-fact tests skip and the run stays green.
+
+`HF_HUB_OFFLINE` is deliberately not set in CI, because the runner must download the models.
+
+---
+
 ## Config files
 
 - `pyproject.toml`: pytest settings:
@@ -514,4 +529,5 @@ The Part 5 eval harness. It uses the full pipeline: hybrid top 10, then rerank t
   - the `slow` marker (real models);
   - the `eval` marker (paid Claude API calls);
   - a filter that hides chromadb's `asyncio` deprecation warning.
-- `.gitignore`: `__pycache__/`, `.venv/`, `*.pyc`, `chroma_db/`.
+- `.gitignore`: `__pycache__/`, `.venv/`, `*.pyc`, `chroma_db/`, `.DS_Store`.
+- `requirements.txt`: pinned `anthropic`, `chromadb`, `sentence-transformers`, `torch`, `pytest` (the versions used locally).
