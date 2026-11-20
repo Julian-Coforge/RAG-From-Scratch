@@ -1,7 +1,12 @@
+from pathlib import Path
+
 import pytest
 
 from rag.hybrid import tokenize, keyword_search, rrf_fuse, hybrid_search
-from rag.store import add_chunks, search
+from rag.ingest import build_index
+from rag.store import add_chunks, make_embedder, search
+
+DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
 
 
 # ---------- tokenize ----------
@@ -130,3 +135,23 @@ def test_hybrid_search_result_keeps_metadata_for_attribution(collection, fake_em
 def test_hybrid_search_result_includes_chunk_text(collection, fake_embed):
     add_chunks(collection, HYBRID_CHUNKS, fake_embed)
     assert hybrid_search(collection, QUERY, fake_embed, k=1)[0]["chunk"] == "Receipts rules for FIN-204."
+
+
+# ---------- real corpus + real model (slow) ----------
+
+PERIPHERALS_QUERY = "Can I get reimbursed for extra peripherals?"
+EQUIPMENT_SECTION = "Equipment and information security"
+
+
+@pytest.mark.slow
+def test_real_corpus_vector_only_misses_equipment_chunk(collection):
+    embed = make_embedder("all-MiniLM-L6-v2")
+    build_index(DOCS_DIR, collection, embed)
+    assert EQUIPMENT_SECTION not in [r["section"] for r in search(collection, PERIPHERALS_QUERY, embed, k=3)]
+
+
+@pytest.mark.slow
+def test_real_corpus_hybrid_finds_equipment_chunk(collection):
+    embed = make_embedder("all-MiniLM-L6-v2")
+    build_index(DOCS_DIR, collection, embed)
+    assert EQUIPMENT_SECTION in [r["section"] for r in hybrid_search(collection, PERIPHERALS_QUERY, embed, k=3)]

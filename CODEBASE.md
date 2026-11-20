@@ -258,10 +258,15 @@ Opens the on-disk chromadb collection in `chroma_db/`, creating it if needed. `c
 
 ### `main()`
 
-1. Parses the arguments: `question` and `--k`, which defaults to 3.
+1. Parses the arguments:
+   - `question`;
+   - `--k`, which defaults to 3;
+   - `--mode vector|hybrid`, which defaults to `hybrid`.
 2. Loads the embedder once.
 3. Re-indexes `docs/`. This takes about a second for 20 chunks.
-4. Prints each ranked result as `[rank] distance=... source > section (vVERSION, STATUS)`, followed by the first 200 characters of the chunk.
+4. Retrieves the chunks with `search` or `hybrid_search`.
+5. Prints the mode and the question, then each ranked result as `[rank] <score> source > section (vVERSION, STATUS)`, followed by a 200-character preview. The score is `rrf=` in hybrid mode and `distance=` in vector mode. A keyword-only hybrid hit has no distance.
+6. Calls `answer(..., make_claude_llm())` and prints `Answer:` and the numbered `Sources:`.
 
 ---
 
@@ -375,7 +380,7 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
   - with no results, does not call the LLM;
   - with no results, says "couldn't find".
 
-### `tests/test_hybrid.py` (21 tests, `feature/hybrid`)
+### `tests/test_hybrid.py` (23 tests, 2 slow, `feature/hybrid`)
 
 - **tokenize:**
   - lowercases;
@@ -402,6 +407,9 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
   - returns `k` results;
   - keeps the metadata;
   - includes the chunk text.
+- **slow** (real corpus, "Can I get reimbursed for extra peripherals?"):
+  - vector-only top 3 misses the Equipment chunk;
+  - hybrid top 3 includes it.
 
 ---
 
