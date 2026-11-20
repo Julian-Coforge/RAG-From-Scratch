@@ -307,6 +307,20 @@ Prints each result as `[rank] <score> source > section (vVERSION, STATUS)`. With
 
 ---
 
+## `rag/eval_set.py` (`feature/eval`)
+
+`EVAL_SET` is the Part 5 question set: 10 questions. Each entry has:
+
+- `question`;
+- `expected_source` and `expected_section`, the chunk that should be retrieved;
+- `key_facts`: short exact strings that a correct answer must contain, such as `"$70"`, `"30"` or `"31 March"`.
+
+The set covers all 4 documents, all 3 conflicting expense facts (which expect the **v2.0** source), and one question the documents don't answer ("gym membership"). That question has `expected_source: None` and must produce "couldn't find".
+
+Key facts are short substrings, not sentences, because Claude rewords its answers.
+
+---
+
 ## `example_loop/minimal_loop.py`
 
 Part 2's minimal loop: a standalone script that proves embed, store and retrieve work before any pipeline code exists. It embeds 3 sentences into an in-memory chromadb collection and asks "How many days can I work from home?". It then asserts that the remote-work sentence ranks first and prints `PASS`. It has no functions; it is a top-to-bottom script.
@@ -469,6 +483,21 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
   - a relevant chunk scores higher than an irrelevant one;
   - on the real corpus, hybrid top 10 followed by rerank puts `Equipment and information security` at #1 for the peripherals query.
 
+### `tests/test_eval.py` (34 tests, `feature/eval`)
+
+The Part 5 eval harness. It uses the full pipeline: hybrid top 10, then rerank top 3, then Claude.
+
+- **Fixtures** (module scope, so they are built once):
+  - `retrieve(question)` indexes the real documents into an ephemeral collection and runs hybrid search plus reranking.
+  - `answer_text(question)` caches Claude's answer for each question, so a question with 2 key facts still makes only 1 API call.
+- **Fast checks of the eval set:**
+  - it has at least 8 questions;
+  - it includes an unanswerable question;
+  - every expected section exists in the corpus, which catches typos.
+- **`test_retrieval_recall_at_3`** (slow, 9 cases): the expected `(source, section)` is in the top 3. The result is **9/9**. For comparison, hybrid alone gets 8/9 and vector alone 7/9.
+- **`test_superseded_policy_is_not_retrieved`** (slow, 3 cases, `xfail(strict=True)`): records the planted issue. Superseded v1.4 still appears in the top 3 for every expense question, and ranks #1 for the meal and deadline questions even after reranking. `strict=True` turns a pass into a test failure, so fixing the corpus forces this marker to be removed.
+- **`test_answer_contains_key_fact`** (slow + `eval`, 11 cases): each key fact appears in the answer. Curly apostrophes are normalised first. These tests are skipped when `ANTHROPIC_API_KEY` isn't set.
+
 ---
 
 ## Secrets
@@ -482,6 +511,7 @@ Shared fixtures. pytest finds this file automatically, and a test gets a fixture
 - `pyproject.toml`: pytest settings:
   - `pythonpath = ["."]`, so `import rag` works;
   - `testpaths`;
-  - the `slow` marker;
+  - the `slow` marker (real models);
+  - the `eval` marker (paid Claude API calls);
   - a filter that hides chromadb's `asyncio` deprecation warning.
 - `.gitignore`: `__pycache__/`, `.venv/`, `*.pyc`, `chroma_db/`.
